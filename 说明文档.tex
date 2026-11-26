@@ -1,0 +1,404 @@
+% !TEX program = xelatex
+\documentclass[UTF8,a4paper,11pt,fontset=windows]{ctexart}
+
+\usepackage[a4paper,left=23.5mm,right=23.5mm,top=22mm,bottom=22mm,headheight=14pt,headsep=8mm]{geometry}
+\usepackage{amsmath,amssymb,mathtools,booktabs,tabularx,array,caption,fancyhdr,enumitem,xcolor,tikz,pgfplots,float,listings}
+\usepackage{accsupp}
+\usetikzlibrary{arrows.meta,positioning,calc}
+\pgfplotsset{compat=1.18}
+\usepackage[hidelinks,bookmarksnumbered=true]{hyperref}
+
+% 显式设定 ctex 的 Windows 中文字体，将这两次字体族重声明记录为信息。
+\ExplSyntaxOn
+\msg_redirect_name:nnn { xeCJK } { CJKfamily-redef } { info }
+\ExplSyntaxOff
+\setCJKmainfont[BoldFont=SimHei,ItalicFont=KaiTi]{SimSun}
+\setCJKfamilyfont{zhhei}[BoldFont=SimHei]{SimHei}
+\ExplSyntaxOn
+\msg_redirect_name:nnn { xeCJK } { CJKfamily-redef } { warning }
+\ExplSyntaxOff
+\setmonofont{Consolas}[Scale=0.88]
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[R]{\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\raggedbottom
+
+\linespread{1.15}\selectfont
+\setlength{\parskip}{2.6pt}
+\widowpenalty=10000
+\clubpenalty=10000
+
+\ctexset{
+  section = {
+    format = \raggedright\heiti\bfseries\zihao{4},
+    aftername = \quad,
+    beforeskip = 12pt,
+    afterskip = 5pt
+  },
+  subsection = {
+    format = \raggedright\heiti\bfseries\zihao{-4},
+    aftername = \quad,
+    beforeskip = 10pt,
+    afterskip = 4pt
+  }
+}
+
+\setlength{\heavyrulewidth}{0.85pt}
+\setlength{\lightrulewidth}{0.5pt}
+\renewcommand{\arraystretch}{1.16}
+\setlength{\intextsep}{7pt}
+\captionsetup{font=small,labelsep=quad,skip=4pt}
+\captionsetup[table]{position=above}
+\captionsetup[figure]{position=below}
+
+% Consolas 共用两种连字符的字形，代码复制时须保留 Python 的 ASCII 减号。
+\newcommand{\listingminus}{%
+  \BeginAccSupp{method=hex,unicode,ActualText=002D}%
+  \char45\relax\EndAccSupp{}%
+}
+
+\lstset{
+  language=Python,
+  basicstyle=\ttfamily\footnotesize,
+  frame=tb,
+  framerule=0.4pt,
+  rulecolor=\color{black},
+  commentstyle=\normalfont\fangsong\footnotesize\color{black!65},
+  texcl=true,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  upquote=true,
+  literate={-}{{\listingminus}}1,
+  aboveskip=6pt,
+  belowskip=6pt
+}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcommand{\W}{\,\mathrm{W}}
+\newcommand{\code}[1]{\texttt{#1}}
+\hypersetup{
+  pdftitle={无人机飞行功率预测模型说明文档},
+  pdfauthor={谢沛桦}
+}
+
+\begin{document}
+
+{\centering
+  {\heiti\bfseries\Large 无人机飞行功率预测模型说明文档\par}
+  \vspace{6pt}
+  学号\enspace 24363102\qquad 姓名\enspace 谢沛桦\par
+  \vspace{3pt}
+  {\small 中山大学智能工程学院\enspace 深度学习期末考核（2026 年 11 月）\par}
+}
+
+\section{任务背景与数据特性分析}
+
+\textbf{任务定义与规则约束。}本考核任务依据 5\,Hz（时间步长 $\Delta t = 0.2\,\mathrm{s}$）机载遥测与任务设置序列预测多旋翼无人机瞬时电功率 $\mathrm{power}$（W），评价主指标为逐航次平均绝对误差（MAE），辅指标包括 RMSE、$R^2$ 与单航次积分能量相对误差 $E_{\mathrm{rel}}$。提交方案严格遵守考核规范：不使用任何课程数据集以外的外部数据；全部特征计算、物理基线与模型权重在测试前冻结；字段 \code{flight}、\code{segment}、\code{t} 仅作分组、排序与对齐键，全部差分、滑窗、分位数与局部积分操作严格限制在同一连续片段 \code{(flight, segment)} 内部，绝不跨段越界。
+
+\textbf{多平台数据分布。}全部 394 个训练航次共 836{,}547 条记录（455 个连续片段，其中 26 个航次含多段，地面及起降阶段 $<30\W$ 占比 $10.43\%$，全集均值 $257.86\W$，标准差 $139.50\W$，峰值 $939.8\W$），覆盖 A、B、C、D 四类差异显著的多旋翼平台（表~\ref{tab:dataset}）。
+
+\begin{table}[H]
+  \centering
+  \caption{四类平台训练数据分布特征统计（394 航次 / 836{,}547 行）}
+  \label{tab:dataset}
+  {\setlength{\tabcolsep}{4.5pt}
+  \begin{tabularx}{\linewidth}{@{}Xrrrrrrr@{}}
+    \toprule
+    \heiti 平台 & \heiti 航次 & \heiti 样本行数 & \heiti 均值（W） & \heiti 标准差（W） & \heiti 峰值（W） & \heiti $<30\W$ 占比 & \heiti 载荷（0/1/2） \\
+    \midrule
+    A & 95 & 294{,}495 & 220.13 & 79.24 & 495.9 & 9.82\% & 60 / 33 / 2 \\
+    B & 68 & 194{,}335 & 212.57 & 65.73 & 529.3 & 5.31\% & 20 / 27 / 21 \\
+    C & 169 & 158{,}437 & 402.57 & 229.75 & 939.8 & 21.67\% & 60 / 53 / 56 \\
+    D & 62 & 189{,}280 & 241.94 & 74.22 & 474.9 & 7.21\% & 32 / 30 / 0 \\
+    \addlinespace[4pt]
+    全部 & 394 & 836{,}547 & 257.86 & 139.50 & 939.8 & 10.43\% & 172 / 143 / 79 \\
+    \bottomrule
+  \end{tabularx}}
+\end{table}
+
+\textbf{三大核心难点。}第一，C 平台机体质量与载荷跨度极大（功率均值 $402.57\W$、标准差 $229.75\W$），且包含多载荷强机动航次，成为全集误差的主要来源。第二，样本呈显著双峰分布，地面待机与空中带载功率量级相差两个数量级。第三，部分航次存在气压高度负向漂移（如 \code{F0025} 最低达 $-11.03\,\mathrm{m}$、\code{F0089} 达 $-7.25\,\mathrm{m}$）与传感器单点负尖刺（如 B 平台 \code{F0353} 出现 $-62.77\,\mathrm{m}$ 跳变），常规以最小值为零点的高度归一法会在整段上产生系统性高度偏置，导致深度序列模型在异常航次上发生大幅过估或欠估。
+
+\section{特征工程与抗漂移物理建模}
+
+\subsection{输入字段与片段内鲁棒预处理}
+
+模型输入涵盖 5 项任务设置（\code{payload\_level}、\code{cmd\_speed}、\code{cmd\_alt}、\code{speed\_varies}、\code{alt\_varies}）与 9 项瞬时遥测状态（\code{v\_fwd}、\code{v\_right}、\code{v\_up}、\code{h\_rel}、\code{pitch}、\code{roll}、\code{yaw\_rate}、\code{wind\_speed}、\code{wind\_dir}）。缺失 \code{platform} 时默认回退至 \code{C}，并对数值列内的 \code{NaN}/\code{Inf} 严格在 \code{(flight, segment)} 组内按前向、后向填充及零值兜底。输出保留与原始输入完全一致的 \code{flight}、\code{segment}、高保真字符串 \code{t} 及原始行序。
+
+\subsection{抗尖刺 \texttt{q05} 气压漂移校准}
+
+针对 \code{h\_rel} 中的气压负向零漂与孤立单点尖刺，摒弃易受极小值破坏的 $\min(h_{\mathrm{rel}})$ 参考点，改用同一 \code{(flight, segment)} 内的 $5\%$ 分位数作为稳健地面参考基准：
+\begin{equation}
+  h_{\mathrm{base}} = \mathrm{clip}\bigl(Q_{0.05}(h_{\mathrm{rel}}),\,-20.0,\,0.0\bigr),\quad
+  h_{\mathrm{agl}} = \max(0,\,h_{\mathrm{rel}}-h_{\mathrm{base}}),\quad
+  h_{\log} = \ln(1+h_{\mathrm{agl}}).
+  \label{eq:q05_alt}
+\end{equation}
+同时对原始 $h_{\mathrm{rel}}$ 做 $[-20.0,\,200.0]\,\mathrm{m}$ 限幅以保护梯度与物理先验。该机制对 $-62.77\,\mathrm{m}$ 单点尖刺完全免疫，同时能拉平 $-7\,\mathrm{m}$ 至 $-11\,\mathrm{m}$ 的持续负向气压漂移。
+
+\subsection{气动动力学派生量与多视图特征组织}
+
+\textbf{气动与旋转修正物理量。}围绕多旋翼动量理论与体坐标系动力学，构造如下关键物理量：由相对风分解得到迎面风 $w_x = w_s\cos\psi_w$ 与侧向风 $w_y = w_s\sin\psi_w$，结合水平地速 $v_h=\sqrt{v_{\mathrm{fwd}}^2+v_{\mathrm{right}}^2}$ 形成诱导功率相关交互项 $v_h w_x$、$v_h w_y$ 与立方风阻项；由俯仰角 $\theta$、横滚角 $\phi$ 构造载荷因子 $n_L = 1/\max(0.5,\,\cos\theta\cos\phi)$、倾斜角 $\sqrt{\theta^2+\phi^2}$ 及推力功项 $n_L^{1.5}$、$n_L v_{\mathrm{up}}$；引入悬停诱导速度代理 $v_i = \sqrt{\max(0,\,0.25(v_{\mathrm{up}}^2+v_h^2)+25)} - 0.5 v_{\mathrm{up}}$；考虑偏航角速度 $\dot\psi$ 耦合效应，计算体坐标系水平比力 $f_x = \dot v_{\mathrm{fwd}} - \dot\psi v_{\mathrm{right}}$、$f_y = \dot v_{\mathrm{right}} + \dot\psi v_{\mathrm{fwd}}$，以及气压微分与垂速残差 $\dot h_{\mathrm{rel}} - v_{\mathrm{up}}$ 用来指示传感器瞬态跳变。
+
+\textbf{片段内多尺度时序特征。}在严格限定 \code{(flight, segment)} 边界内，分别构建三类不同粒度的时序特征视图（表~\ref{tab:features}）：面向 \code{q05} 树模型与 \code{TabM} 的高维双向特征包含滞后与超前移位 $k\in\{\pm1,\pm2,\allowbreak\pm3,\pm5,\allowbreak\pm10,\pm15\}$、中心一阶/二阶差分、中心滑动均值/标准差/极值（窗长 $w\in\{5,11,25\}$）、姿态微振荡短窗波动（\code{pitch}、\code{roll} 与 \code{yaw\_rate} 在 $w\in\{5,11\}$ 的滚动标准差）以及段级分位数统计。值得注意的是，待机/飞行门控器刻意剔除任务设置与段级统计（251 维），防止地面行与段均值耦合导致误门控。
+
+\begin{table}[H]
+  \centering
+  \caption{各异构模型族的特征视图维度与物理基配置}
+  \label{tab:features}
+  \begin{tabularx}{\linewidth}{@{}llY@{}}
+    \toprule
+    \heiti 模型族 & \heiti 输入维度 & \heiti 特征构成与分段边界策略 \\
+    \midrule
+    \code{q05} 树模型（Cat/XGB/LGB） & 回归 286 维 / 门控 251 维 & 37 项瞬时物理量 + 5 项任务量 + 96 项双向移位 + 40 项中心一二阶差分 + 72 项滑窗 + 6 项姿态微振荡 + 30 项段分位；全部限在段内 \\
+    \code{W1} 平台隔离专家 & 基础 144 维 / 扩展 186 维 & 严格因果前序特征、偏航积分坐标旋转加速度、EMA55 低通/高通分量及 C 平台 \code{rotor}/\code{force} 双视图 \\
+    \code{TabM\_phys} 残差网络 & 279 + 1 = 280 维 & 含双向滑窗、载荷推力项与末尾拼接 1 维 IRLS 物理先验 $\hat y_{\mathrm{phys}}$，以训练折中位/IQR 稳健标准化 \\
+    \code{ResTCN\_v2} 序列网络 & 51 + 1 = 52 维 & 17 项瞬时物理状态 + 16 项差分 + 6 项姿态微振荡 + 7 项耦合项 + 5 项任务量 + $\hat y_{\mathrm{phys}}$ 逐帧序列 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{稳健物理先验基线（IRLS）}
+
+所有主体模型均采用「物理线性先验 + 非线性残差学习」架构。仅在训练折的有动力样本（$y \ge 30\W$）上，以航次等权 $w_i \propto 1/N_{\mathrm{flight}(i)}$ 提取包含截距、\code{payload\_level}、$n_L$、$n_L^{1.5}$、$v_{\mathrm{up}}$、$n_L v_{\mathrm{up}}$、$v_{\mathrm{up}}|v_{\mathrm{up}}|$、$v_h$、$v_h^2$、$w_s$、$w_s^2$、倾斜角、$h_{\log}$ 及 $v_i$ 的 14 维物理基向量 $\boldsymbol{\phi}_i$，经 Z-score 标准化与 L2 正则（惩罚因子 $0.01\sum w_i$）做 5 步迭代重加权最小二乘（Huber 权重 $25/\max(|r_i|,25)$）求得 $\hat y_{\mathrm{phys},i} = \boldsymbol{\phi}_i^{\top}\boldsymbol{\beta}_{\mathrm{IRLS}}$。下游树模型与深度网络只需集中拟合残差 $r_i = y_i - \hat y_{\mathrm{phys},i}$，大幅增强跨风况与高载荷区间的外推平滑性。
+
+\section{异构模型架构、安全护栏与融合策略}
+
+系统总体推理链路见图~\ref{fig:arch}：原始遥测经过段内清洗后按平台 A/B/C/D 路由至各自冻结的 5 组异构树专家与 2 组深度物理残差网络（共 405 个全参数冻结模型文件）；神经网络预测须经由 5 棵树的中位数触发连续安全护栏，最终按每平台冻结的最优线性组合输出非负功率 \code{power\_pred}。
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[
+    font=\footnotesize,
+    box/.style={draw=black,line width=0.5pt,minimum height=9.5mm,align=center,inner xsep=3.5pt,inner ysep=2.5pt},
+    graybox/.style={box,fill=black!10},
+    flow/.style={-{Stealth[length=2mm]},line width=0.55pt},
+    node distance=4mm and 4.5mm
+  ]
+    \node[box,minimum width=19mm] (in) {输入 CSV\\段内清洗};
+    \node[box,minimum width=18mm,right=of in] (route) {平台路由\\A / B / C / D};
+    \node[graybox,minimum width=33mm,above right=3.2mm and 5mm of route] (trees) {5 组抗漂移树专家\\{\scriptsize W1 / Cat / XGB / LGB / ET}};
+    \node[graybox,minimum width=33mm,below right=3.2mm and 5mm of route] (nn) {2 组深度残差网络\\{\scriptsize TabM\_phys + ResTCN\_v2}};
+    \node[box,minimum width=23mm,right=4.5mm of trees] (med) {5 树中位数\\$m_i = \mathrm{med}(\hat y_{\mathrm{tree}})$};
+    \node[box,minimum width=23mm,right=4.5mm of nn] (guard) {连续安全护栏\\$[80,\,140]\W$ 收敛};
+    \node[box,minimum width=21mm] (blend) at ($(med.east)!0.5!(guard.east)+(15.5mm,0)$) {冻结线性融合\\与非负截断};
+
+    \draw[flow] (in) -- (route);
+    \draw[flow] (route.east) -- ++(2.5mm,0) |- (trees.west);
+    \draw[flow] (route.east) -- ++(2.5mm,0) |- (nn.west);
+    \draw[flow] (trees) -- (med);
+    \draw[flow] (nn) -- (guard);
+    \draw[flow] (med) -- (guard);
+    \draw[flow] (med.east) -| ($(blend.west)+(-2.5mm,0)$) -- (blend.west);
+    \draw[flow] (guard.east) -| ($(blend.west)+(-2.5mm,0)$);
+  \end{tikzpicture}
+  \caption{纯 CPU 离线异构集成与树共识安全护栏推理架构}
+  \label{fig:arch}
+\end{figure}
+
+\subsection{五组抗漂移树模型专家}
+
+\textbf{平台隔离专家（\texttt{w1\_isolated}）。}基于严格因果特征与 $30\W$ 二分类门控概率 $p$，对有动力区间分别耦合 IRLS 物理残差模型、按垂速软划分的爬升/平飞/下降三相位 LightGBM 专家，以及平台专属残差模型（C 平台额外分裂出旋翼圆盘视角 \code{rotor} 与全气动力视角 \code{force}，融合基权重分别为 A/B/D 取 $0.50$、C 取 $0.40$）。每平台 5 折共包含 165 个冻结组件。
+
+\textbf{多深度多种子 \texttt{q05} 梯度提升树。}共享 286 维 \code{q05} 双向特征与 XGBoost 二分类门控（$g<0.02$ 置零），每折构建深度 $d\in\{6,7,8\}$ $\times$ 3 随机种子（偏移 $0/1000/2000$）共 3 组强互补子模型取均：\code{catboost\_q05\_ms} 采用 \code{Huber:delta=15.0}（2600 树，学习率 0.045）抑制尖峰离群值影响；\code{xgboost\_q05\_ms} 采用 L1 目标 \code{reg:absoluteerror}（1800 树，学习率 0.03）对均值绝对误差直接寻优。另外独立训练 \code{lgb\_q05\_l1}（63 叶、1200 树）与启用结构随机分裂的 \code{lgb\_q05\_et}（ExtraTrees、95 叶、1400 树）构成 5 棵形态各异的树集成群体。
+
+\subsection{两组深度物理残差网络}
+
+\textbf{结构化深度表格网络（\texttt{TabM\_phys}）。}采用 64 频随机傅里叶嵌入结合 3 层残差块（隐藏维 256，BatchEnsemble 头数 $K=16$，Dropout 0.15）对 280 维标准化特征学习残差比例缩放量；推理时取 16 个集成头输出的中位数，有效降低单头方差并提升对中等非线性过渡段的拟合精度。
+
+\textbf{全局上下文调制卷积网络（\texttt{ResTCN\_v2}）。}针对强机动的 C 平台长程动力学耦合，设计带门控线性单元（GLU）的多尺度空洞残差一维卷积骨干：输入 52 维逐时刻特征经 Stem 映射到 $H=160$ 维后，依次通过膨胀系数 $d\in\{1,2,4,8,16,32\}$（核宽 5）的 6 层空洞残差块捕获长时记忆；随后经注意力加权均值与标准差池化抽取片段级全局风扰与质量上下文，通过 FiLM 仿射层（$h\odot(1+0.25\tanh\gamma)+\beta$）实时调制隐特征，接 2 层局部细化卷积（$k=3, d\in\{1,2\}$）输出平滑待机门控 $\sigma(z_{\mathrm{gate}})$ 与残差修正项 $\Delta\hat y$：
+\begin{equation}
+  \hat y_{\mathrm{tcn}} = \sigma(z_{\mathrm{gate}}) \cdot \mathrm{ReLU}\bigl(\hat y_{\mathrm{phys}} + s_{\mathrm{res}}\cdot \Delta\hat y\bigr),\quad
+  \mathcal{L} = \mathcal{L}_{L1} + 0.25\,\mathcal{L}_{\Delta t} + 0.15\,\mathcal{L}_{\mathrm{BCE}}.
+  \label{eq:restcn}
+\end{equation}
+式~\eqref{eq:restcn} 中的时序一阶差分损失 $\mathcal{L}_{\Delta t}$ 迫使预测功率波形贴合瞬态加速趋势；每折训练 42、1042 两个随机种子（各 60 轮余弦退火），全集共 40 个 \code{ResTCN\_v2} 权重文件。
+
+\subsection{连续树共识安全护栏与分平台冻结权重}
+
+深度网络在外推工况下偶尔会出现瞬时门控闪断或异常尖峰（如无护栏的 \code{ResTCN\_v2} 在 \code{F0089} 单航次 MAE 达 $95.86\W$）。为此对两个神经网络分支施加连续线性收敛的树共识护栏：以 5 组树模型的逐点中位数 $m_i = \mathrm{median}(\hat y_{i,\mathrm{W1}},\,\hat y_{i,\mathrm{Cat}},\,\hat y_{i,\mathrm{XGB}},\,\hat y_{i,\mathrm{LGB\_L1}},\,\hat y_{i,\mathrm{LGB\_ET}})$ 为锚点，在偏离区间 $[T_{\mathrm{low}}, T_{\mathrm{high}}] = [80,\,140]\W$ 内平滑回拉至树中位数：
+\begin{equation}
+  \alpha_i = \mathrm{clip}\!\left(\frac{|\hat y_i^{\mathrm{nn}} - m_i| - 80.0}{140.0 - 80.0},\,0.0,\,1.0\right),\qquad
+  \tilde y_i^{\mathrm{nn}} = (1 - \alpha_i)\,\hat y_i^{\mathrm{nn}} + \alpha_i\,m_i.
+  \label{eq:guard}
+\end{equation}
+全集 836{,}547 行回测表明，护栏在 \code{ResTCN\_v2} 上仅于 4{,}233 行（$0.506\%$，其中完全切至中位 $\ge 140\W$ 仅 2{,}280 行）轻度触发，便将该模型单航次最坏 MAE 从 $95.86\W$ 压降至 $36.69\W$，整体独立 MAE 由 $14.74\W$ 降至 $14.59\W$；在 \code{TabM\_phys} 上触发 3{,}112 行（$0.372\%$），最坏航次由 $56.32\W$ 压降至 $45.97\W$。最终每平台的 5 折 LOFO 权重均值直接冻结于 \code{manifest.json}（表~\ref{tab:weights}）。平台 A、B、D 由轻量高速树专家主导，而物理难度最高、动力学变化剧烈的平台 C 上，\code{ResTCN\_v2}（$0.501$）与 \code{TabM\_phys}（$0.200$）合计承担 $70.1\%$ 权重，与树专家形成高度互补。
+
+\begin{table}[H]
+  \centering
+  \caption{分平台冻结最终融合权重（来自 \texttt{models/manifest.json}）}
+  \label{tab:weights}
+  {\setlength{\tabcolsep}{4.5pt}
+  \begin{tabularx}{\linewidth}{@{}l*{7}{>{\raggedleft\arraybackslash}X}@{}}
+    \toprule
+    \heiti 平台 & \heiti W1 专家 & \heiti Cat\_q05 & \heiti XGB\_q05 & \heiti LGB\_L1 & \heiti LGB\_ET & \heiti TabM & \heiti ResTCN2 \\
+    \midrule
+    A & 0.417 & 0.303 & 0.113 & 0.000 & 0.006 & 0.039 & 0.123 \\
+    B & 0.042 & 0.333 & 0.186 & 0.213 & 0.075 & 0.052 & 0.100 \\
+    C & 0.146 & 0.054 & 0.004 & 0.068 & 0.027 & 0.200 & 0.501 \\
+    D & 0.531 & 0.168 & 0.000 & 0.029 & 0.145 & 0.014 & 0.112 \\
+    \bottomrule
+  \end{tabularx}}
+\end{table}
+
+\section{严格零泄漏交叉验证与结果分析}
+
+\subsection{分层按航次 5 折交叉验证（LOFO）}
+
+为杜绝同一航次相邻 $0.2\,\mathrm{s}$ 样本间的时间自相关泄漏，按平台与载荷等级将 394 个完整航次统一分层划分为 5 折（第 0--3 折各 79 航次、第 4 折 78 航次；每折平台分布为 A: 19、B: 13--14、C: 33--34、D: 12--13 航次）。所有特征统计量、标准化参数、物理先验与集成权重均仅在对应 4 个训练折上拟合（融合权重采用约束在单形内且 L2 正则系数为 $0.20$ 的嵌套 LOFO 优化），再严格在留出验证折上评估。
+
+\subsection{全量模型对比与稳定性验证}
+
+\textbf{单模型与多候选集成对比。}表~\ref{tab:benchmark} 汇总了 394 航次 OOF 同口径评估指标。所有树专家及 \code{ResTCN\_v2} 的单模型 MAE 均已进入 $14.63\text{--}14.77\W$ 区间，其中 \code{ResTCN\_v2} 在高难度 C 平台上单独取得 $20.90\W$（较所有树模型再降约 $1.1\W$）。尽管补充实验的 \code{conv\_bigru\_v2}（$14.94\W$）与 \code{patch\_trans\_v2}（$14.97\W$）同样具备一定时序建模能力，将其全部并入的 \code{q05\_all\_3seq} 集成却得 $13.8306\W$，反较剔除冗余循环/注意力骨干后的 \textbf{\texttt{q05\_trees\_tcn2}} 略逊一筹且在 CPU 上带来沉重时序开销。最终选定的 \textbf{\texttt{q05\_trees\_tcn2}} 取得最优全集表现：\textbf{MAE = $13.8238\W$}（相对训练集均值常数基准 $\approx 140\W$ 降低超过 $90\%$，较原 $13.8760\W$ 封板版本进一步提升，C 平台压低至 $20.51\W$，B/D 分别达到 $8.46\W$ 与 $9.20\W$），\textbf{RMSE = $20.9636\W$}、\textbf{$R^2 = 0.95071$}、\textbf{积分能量相对误差 $2.40\%$}、全部 394 个航次中\textbf{最坏单航次仅 $36.46\W$、$>50\W$ 失效航次数严格为 0}。
+
+\begin{table}[H]
+  \centering
+  \caption{394 航次严格 5 折 LOFO 性能全面对比（按航次等权平均）}
+  \label{tab:benchmark}
+  {\small\setlength{\tabcolsep}{4pt}
+  \begin{tabularx}{\linewidth}{@{}Xrrrrrrr@{}}
+    \toprule
+    \heiti 模型 / 方案 & \heiti MAE & \heiti RMSE & \heiti $R^2$ & \heiti $E_{\mathrm{rel}}$ & \heiti Max & \heiti A / B / D & \heiti C MAE \\
+    \midrule
+    \code{w1\_isolated}（基准树） & 14.63 & 22.64 & 0.9471 & 2.46\% & 39.84 & 8.90 / 9.35 / 9.22 & 21.96 \\
+    \code{lgb\_q05\_et}（ExtraTrees） & 14.64 & 22.11 & 0.9424 & 2.54\% & 37.99 & 9.14 / 8.65 / 9.62 & 22.00 \\
+    \code{catboost\_q05\_ms} & 14.66 & 22.28 & 0.9209 & 2.56\% & 64.41 & 9.06 / 8.51 / 10.02 & 21.98 \\
+    \code{xgboost\_q05\_ms} & 14.71 & 22.42 & 0.9398 & 2.56\% & 59.59 & 9.11 / 8.53 / 10.15 & 22.03 \\
+    \code{lgb\_q05\_l1} & 14.77 & 22.33 & 0.9346 & 2.57\% & 47.21 & 9.40 / 8.55 / 10.13 & 22.00 \\
+    \addlinespace[4pt]
+    \code{tabm\_phys}（未护栏） & 16.13 & 24.16 & 0.9279 & 3.07\% & 56.32 & 10.22 / 10.72 / 12.25 & 23.06 \\
+    \code{res\_tcn\_v2}（未护栏） & 14.74 & 22.12 & 0.9317 & 2.62\% & 95.86 & 9.97 / 10.05 / 10.38 & 20.90 \\
+    \code{conv\_bigru\_v2}（对照） & 14.94 & 22.45 & 0.9366 & 2.62\% & 49.22 & 9.67 / 10.56 / 10.53 & 21.28 \\
+    \code{patch\_trans\_v2}（对照） & 14.97 & 22.66 & 0.9380 & 2.65\% & 63.16 & 9.88 / 10.44 / 10.93 & 21.14 \\
+    \addlinespace[4pt]
+    \code{guarded\_v1\_tcn2}（备份） & 13.88 & 21.24 & 0.9515 & 2.39\% & 36.36 & 8.72 / 8.58 / 9.30 & 20.58 \\
+    \code{q05\_all\_3seq}（全序列） & 13.83 & 20.97 & 0.9507 & 2.41\% & 36.51 & 8.80 / 8.46 / 9.20 & 20.52 \\
+    \heiti \code{q05\_trees\_tcn2}（最优） & \heiti 13.82 & \heiti 20.96 & \heiti 0.9507 & \heiti 2.40\% & \heiti 36.46 & \heiti 8.78 / 8.46 / 9.20 & \heiti 20.51 \\
+    \bottomrule
+  \end{tabularx}}
+\end{table}
+
+\textbf{五折稳定性与异常哨兵航次审计。}表~\ref{tab:folds_sentinels} 左侧展示各折一致稳定在 $13.28\text{--}14.35\W$ 区间，无明显折间退化；右侧哨兵航次审计证实，对于强负向气压漂移（\code{F0025}、$-7.25\,\mathrm{m}$ 的 \code{F0089}、\code{F0332}）与 $-62.77\,\mathrm{m}$ 单点跳变（\code{F0353}），\code{q05} 校正与树共识护栏协同作用，将 \code{F0089} 从无护栏 \code{ResTCN\_v2} 的 $95.86\W$ 锐减至 $19.50\W$，\code{F0353} 稳控在 $6.39\W$。
+
+\begin{table}[H]
+  \centering
+  \caption{分折一致性校验（左）与异常哨兵航次 MAE 审计（右，单位：W）}
+  \label{tab:folds_sentinels}
+  \begin{tabularx}{\linewidth}{@{}lrrrr@{\hspace{8mm}}Xrrr@{}}
+    \toprule
+    \heiti 验证折 & \heiti 航次 & \heiti MAE & \heiti RMSE & \heiti $E_{\mathrm{rel}}$ & \heiti 哨兵航次（异常特征） & \heiti TabM & \heiti TCN2 & \heiti 最优 \\
+    \midrule
+    Fold 0 & 79 & 14.35 & 21.00 & 2.65\% & \code{F0025}（C, 漂移 $-11.03\,\mathrm{m}$） & 27.74 & 15.45 & 17.13 \\
+    Fold 1 & 79 & 14.10 & 21.53 & 2.63\% & \code{F0089}（C, 漂移 $-7.25\,\mathrm{m}$） & 26.91 & 95.86 & 19.50 \\
+    Fold 2 & 79 & 13.93 & 20.55 & 2.67\% & \code{F0332}（C, 漂移 $-1.25\,\mathrm{m}$） & 22.84 & 14.50 & 18.58 \\
+    Fold 3 & 79 & 13.28 & 20.19 & 2.09\% & \code{F0414}（C, 漂移 $-6.73\,\mathrm{m}$） & 42.05 & 18.42 & 28.67 \\
+    Fold 4 & 78 & 13.46 & 21.56 & 1.98\% & \code{F0353}（B, 尖刺 $-62.77\,\mathrm{m}$） & 5.59 & 7.02 & 6.39 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\textbf{逐航次误差分布与典型功率追踪波形。}如图~\ref{fig:mae_hist} 所示，全部 394 个航次中 A/B/D 三平台高度集中在 $[0, 15)\W$（中位数分别为 $7.48$、$7.38$、$7.45\W$），全集中位数仅为 $12.87\W$，95 分位数 $28.06\W$，彻底清零 $>50\W$ 长尾灾难。图~\ref{fig:waveform} 展示典型 C 平台复杂航次 \code{F0001}（载荷等级 0、巡航高度 $100\,\mathrm{m}$、MAE 为 $13.59\W$）的全程功率轨迹：地面待机近零段、起飞急剧爬升峰值、高空巡航微幅波动与降落截断均实现严密贴合。
+
+\begin{figure}[H]
+  \centering
+  \begin{minipage}[t]{0.47\linewidth}
+    \centering
+    \begin{tikzpicture}
+      \begin{axis}[
+        width=5.7cm,height=4.8cm,scale only axis,
+        ybar stacked,bar width=8.5pt,
+        axis lines=left,axis line style={black,line width=0.55pt},
+        tick align=outside,tick style={black},
+        font=\footnotesize,
+        ymin=0,ymax=138,
+        xmin=-0.6,xmax=7.6,
+        xtick={0,1,2,3,4,5,6,7},
+        xticklabels={0--5,5--10,10--15,15--20,20--25,25--30,30--35,35--40},
+        x tick label style={rotate=30,anchor=east,font=\scriptsize},
+        xlabel={单航次 MAE 区间（W）},
+        ylabel={航次数量},
+        ymajorgrids,grid style={black!18,line width=0.25pt},
+        legend style={at={(0.98,0.97)},anchor=north east,draw=black,fill=white,font=\scriptsize,line width=0.4pt}
+      ]
+        \addplot[fill=black!75,draw=black] coordinates {
+          (0,43) (1,115) (2,45) (3,13) (4,6) (5,3) (6,0) (7,0)
+        };
+        \addplot[fill=black!20,draw=black] coordinates {
+          (0,0) (1,0) (2,23) (3,74) (4,44) (5,12) (6,15) (7,1)
+        };
+        \legend{A/B/D 平台, C 平台}
+        \node[anchor=north east,font=\scriptsize,align=right] at (axis cs:7.45,103) {全集 P50 = 12.87 W\\全集 P95 = 28.06 W};
+      \end{axis}
+    \end{tikzpicture}
+    \caption{394 航次 MAE 分布（0 例 $>50\W$）}
+    \label{fig:mae_hist}
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.49\linewidth}
+    \centering
+    \begin{tikzpicture}
+      \begin{axis}[
+        width=6.0cm,height=4.8cm,scale only axis,
+        axis lines=left,axis line style={black,line width=0.55pt},
+        tick align=outside,tick style={black},
+        font=\footnotesize,
+        xmin=0,xmax=310,ymin=0,ymax=670,
+        xtick={0,60,120,180,240,300},
+        ytick={0,200,400,600},
+        xlabel={飞行时间 $t$（s）},
+        ylabel={功率（W）},
+        ymajorgrids,grid style={black!18,line width=0.25pt},
+        legend style={at={(0.98,0.97)},anchor=north east,draw=black,fill=white,font=\scriptsize,line width=0.4pt}
+      ]
+        \addplot[black,line width=0.8pt] coordinates {
+          (0.0,0.0) (4.0,0.0) (8.0,0.0) (12.0,0.0) (16.0,297.3) (20.0,363.8) (24.0,526.0)
+          (28.0,551.4) (32.0,538.3) (36.0,517.8) (40.0,533.5) (44.0,547.1) (48.0,530.0)
+          (52.0,555.0) (56.0,476.0) (60.0,460.8) (64.0,447.6) (68.0,465.3) (72.0,481.5)
+          (76.0,436.7) (80.0,472.4) (84.0,484.0) (88.0,506.8) (92.0,497.0) (96.0,549.1)
+          (100.0,477.6) (104.0,457.8) (108.0,496.5) (112.0,439.8) (116.0,459.2) (120.0,447.3)
+          (124.0,445.9) (128.0,462.7) (132.0,420.9) (136.0,418.7) (140.0,432.5) (144.0,412.7)
+          (148.0,503.1) (152.0,411.8) (156.0,448.1) (160.0,484.0) (164.0,498.8) (168.0,449.4)
+          (172.0,464.2) (176.0,464.7) (180.0,397.8) (184.0,395.4) (188.0,448.9) (192.0,462.2)
+          (196.0,447.0) (200.0,519.9) (204.0,466.6) (208.0,449.0) (212.0,447.1) (216.0,432.1)
+          (220.0,390.0) (224.0,429.1) (228.0,438.4) (232.0,4.6) (236.0,0.2) (240.0,0.0)
+          (248.0,0.0) (260.0,0.4) (276.0,0.0) (292.0,0.1) (304.0,0.0)
+        };
+        \addplot[black!55,densely dashed,line width=0.85pt] coordinates {
+          (0.0,0.1) (4.0,0.1) (8.0,0.1) (12.0,0.1) (16.0,26.8) (20.0,475.0) (24.0,561.8)
+          (28.0,569.0) (32.0,557.2) (36.0,534.4) (40.0,547.6) (44.0,538.4) (48.0,555.7)
+          (52.0,533.1) (56.0,502.4) (60.0,463.4) (64.0,473.9) (68.0,475.5) (72.0,494.1)
+          (76.0,472.3) (80.0,484.6) (84.0,477.4) (88.0,491.5) (92.0,484.7) (96.0,552.9)
+          (100.0,446.2) (104.0,450.0) (108.0,458.4) (112.0,451.0) (116.0,465.0) (120.0,444.7)
+          (124.0,437.6) (128.0,439.5) (132.0,451.0) (136.0,454.3) (140.0,467.3) (144.0,459.5)
+          (148.0,510.2) (152.0,438.4) (156.0,442.6) (160.0,480.5) (164.0,520.7) (168.0,468.0)
+          (172.0,466.9) (176.0,461.5) (180.0,407.5) (184.0,438.8) (188.0,448.6) (192.0,462.0)
+          (196.0,432.6) (200.0,487.3) (204.0,479.7) (208.0,458.8) (212.0,461.2) (216.0,446.7)
+          (220.0,434.4) (224.0,450.6) (228.0,474.0) (232.0,1.9) (236.0,0.1) (240.0,0.1)
+          (248.0,0.1) (260.0,0.1) (276.0,0.1) (292.0,0.1) (304.0,0.1)
+        };
+        \legend{真实功率, 集成预测}
+      \end{axis}
+    \end{tikzpicture}
+    \caption{C 平台 \code{F0001} 追踪曲线（MAE = 13.59 W）}
+    \label{fig:waveform}
+  \end{minipage}
+\end{figure}
+
+\section{运行环境、无损纯 CPU 加速与提交自测}
+
+\textbf{运行环境与交付清单。}本方案在纯 CPU 离线环境校验通过，底层采用 \code{Python 3.9.25}，核心依赖锁定于 \code{requirements.txt}：NumPy 2.0.2、pandas 2.3.3、SciPy 1.13.1、LightGBM 4.6.0、XGBoost 2.1.4、CatBoost 1.2.10、PyTorch 2.8.0（CPU 版）及 joblib 1.5.3。交付包根目录包含统一入口 \code{predict.py}、特征库 \code{w1\_lib/}（8 个模块）、训练代码 \code{train\_code/}（6 个脚本）、\code{models/}（5 类子目录共 405 个全冻结模型及配置清单）、\code{requirements.txt} 与本文档，不含任何数据集。
+
+\textbf{三项无损纯 CPU 加速机制。}第一，对 \code{ResTCN\_v2} 实施按片段长度降序分桶的 \code{batch\_size=16} 带掩码批推理，全卷积与全局池化路径严格乘以二进制掩码 \code{mask}，数值验证其与逐段 \code{batch\_size=1} 的最大绝对差仅为 $1.53\times 10^{-6}\W$。第二，每个平台内仅建立并复用单个 ASCII 临时文件缓冲供 CatBoost 与 XGBoost 规避 Windows 中文路径解析限制，消除反复建删目录的磁盘与系统调用延迟。第三，按模型结构动态解锁多核线程（上限 $\min(16,\,\text{CPU 核数})$），并在不入护栏分支且冻结权重 $<10^{-5}$ 时安全跳过多余计算。
+
+\begin{lstlisting}
+# 1. 在干净离线 Python 环境中安装锁定依赖（纯 CPU 版 torch 即可）
+python -m pip install -r requirements.txt
+# 2. 按统一接口执行离线推理，并将输出 CSV 写入提交包外部路径
+python predict.py --input test_inputs --output ../predictions.csv
+\end{lstlisting}
+
+\textbf{魔鬼自测与单双模一致验收。}在强制屏蔽 GPU（\code{CUDA\_VISIBLE\_DEVICES=""}）与删去 \code{power} 列的 79 航次仿真测试集（约占训练全集 $20\%$）上运行 \code{predict.py}：全量批推理耗时 $189.86\,\mathrm{s}$（约 3 分 10 秒），单航次完整加载推理耗时 $38.73\,\mathrm{s}$，单航次单独运行与整批合并运行之间的最大逐点预测偏差仅为 $7.65\times 10^{-6}\W$；输出 UTF-8 CSV 严格包含 \code{flight,segment,t,power\_pred} 四列且与输入行序、字符串时间精度一一对应，零 \code{NaN}/\code{Inf} 异常且全样本严格非负。
+
+\end{document}
