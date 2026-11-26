@@ -388,7 +388,7 @@
 
 \section{运行环境、无损纯 CPU 加速与提交自测}
 
-\textbf{运行环境与交付清单。}本方案在纯 CPU 离线环境校验通过，底层采用 \code{Python 3.9.25}，核心依赖锁定于 \code{requirements.txt}：NumPy 2.0.2、pandas 2.3.3、SciPy 1.13.1、LightGBM 4.6.0、XGBoost 2.1.4、CatBoost 1.2.10、PyTorch 2.8.0（CPU 版）及 joblib 1.5.3。交付包根目录包含统一入口 \code{predict.py}、特征库 \code{w1\_lib/}（8 个模块）、训练代码 \code{train\_code/}（6 个脚本）、\code{models/}（5 类子目录共 405 个全冻结模型及配置清单）、\code{requirements.txt} 与本文档，不含任何数据集。
+\textbf{运行环境与交付清单。}本方案在纯 CPU 离线环境校验通过，底层采用 \code{Python 3.9.25}，核心依赖锁定于 \code{requirements.txt}：NumPy 2.0.2、pandas 2.3.3、SciPy 1.13.1、scikit-learn 1.6.1、LightGBM 4.6.0、XGBoost 2.1.4、CatBoost 1.2.10、PyTorch 2.8.0（CPU 版）及 joblib 1.5.3。交付包根目录包含统一入口 \code{predict.py}、特征库 \code{w1\_lib/}（8 个模块）、训练代码 \code{train\_code/}（6 个脚本）、\code{models/}（5 类子目录共 405 个全冻结模型及配置清单）、\code{requirements.txt} 与本文档，不含任何数据集。
 
 \textbf{三项无损纯 CPU 加速机制。}第一，对 \code{ResTCN\_v2} 实施按片段长度降序分桶的 \code{batch\_size=16} 带掩码批推理，全卷积与全局池化路径严格乘以二进制掩码 \code{mask}，数值验证其与逐段 \code{batch\_size=1} 的最大绝对差仅为 $1.53\times 10^{-6}\W$。第二，每个平台内仅建立并复用单个 ASCII 临时文件缓冲供 CatBoost 与 XGBoost 规避 Windows 中文路径解析限制，消除反复建删目录的磁盘与系统调用延迟。第三，按模型结构动态解锁多核线程（上限 $\min(16,\,\text{CPU 核数})$），并在不入护栏分支且冻结权重 $<10^{-5}$ 时安全跳过多余计算。
 
