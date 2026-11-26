@@ -1,0 +1,15 @@
+{
+  "candidate": "phase_physical",
+  "confirmation_mae_w": 17.038067564990996,
+  "fit": {
+    "phase": {
+      "climb": 534,
+      "level": 540,
+      "descent": 539
+    },
+    "physical": {
+      "main": 780
+    }
+  },
+  "gate_rounds": 276
+}
